@@ -249,6 +249,42 @@ func TestDecodeErrorsV5(t *testing.T) {
 	// - check invalid handshake data sizes
 }
 
+func TestHandshake_malformedAuthMessage(t *testing.T) {
+	t.Parallel()
+	net := newHandshakeTest()
+	defer net.close()
+
+	// A -> B   RANDOM PACKET
+	packet, _ := net.nodeA.encode(t, net.nodeB, &Findnode{})
+	resp := net.nodeB.expectDecode(t, UnknownPacket, packet)
+
+	// A <- B   WHOAREYOU
+	challenge := &Whoareyou{
+		AuthTag:   resp.(*Unknown).AuthTag,
+		IDNonce:   testIDnonce,
+		RecordSeq: 0,
+	}
+	whoareyou, _ := net.nodeB.encode(t, net.nodeA, challenge)
+	net.nodeA.expectDecode(t, WhoareyouPacket, whoareyou)
+
+	// A -> B	FINDNODE (malformed handshake packet)
+	malformedChallenge := &Whoareyou{
+		AuthTag: challenge.AuthTag,
+		IDNonce: [32]byte{5, 6, 7, 8, 9, 6, 11, 12},
+		RecordSeq: challenge.RecordSeq,
+		Node: challenge.Node,
+		sent: challenge.sent,
+	}
+	incorrect_findnode, _ := net.nodeA.encodeWithChallenge(t, net.nodeB, malformedChallenge, &Findnode{})
+	incorrect_findnode2 := make([]byte, len(incorrect_findnode))
+	copy(incorrect_findnode2, incorrect_findnode)
+	net.nodeB.expectDecodeErr(t, errInvalidNonceSig, incorrect_findnode)
+	net.nodeB.expectDecodeErr(t, errInvalidNonceSig, incorrect_findnode2)
+	// After keeping nodeB busy, finally send correctly formed handshake packet
+	findnode, _ := net.nodeA.encodeWithChallenge(t, net.nodeB, challenge, &Findnode{})
+	net.nodeB.expectDecode(t, FindnodeMsg, findnode)
+}
+
 // This test checks that all test vectors can be decoded.
 func TestTestVectorsV5(t *testing.T) {
 	var (
